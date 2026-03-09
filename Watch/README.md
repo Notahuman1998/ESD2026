@@ -1,4 +1,4 @@
-SmartHike Watch OS Documentation
+<h1 align="center">⌚ SmartHike Watch OS Documentation</h1>
 
 🌟 Overview & Features
 
@@ -26,7 +26,9 @@ Wake & Unlock: Tap the screen to wake the watch. The clock face appears. Tap or 
 
 Navigation: The OS is split into 3 main horizontal pages. Swiping Left or Right transitions smoothly between them.
 
-Starting a Workout: - On Page 0, tap an activity from the menu (e.g., "Hiking").
+Starting a Workout:
+
+On Page 0, tap an activity from the menu (e.g., "Hiking").
 
 The live dashboard appears. Tap START HIKE.
 
@@ -82,7 +84,7 @@ The standard physiological formula is:
 
 Calories per minute = (MET * 3.5 * weight in kg) / 200
 
-Because the watch calculates data continuously in seconds using millis(), we adapted the formula by dividing the denominator by 60 (200 * 60 = 12000):
+Because the watch calculates data continuously in seconds using millis(), we adapted the formula by dividing the denominator by 60 (200 x 60 = 12000):
 
 elapsed_hike_time_sec = (millis() - hike_start_time) / 1000;
 current_hike_calories = (elapsed_hike_time_sec * current_met * 3.5 * user_weight) / 12000.0;
