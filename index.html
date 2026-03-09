@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartHike Dashboard</title>
+    <!-- Import Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1e1e1e;
+            --text-main: #ffffff;
+            --accent-teal: #03dac6;
+            --accent-red: #cf6679;
+            --accent-orange: #ffb74d;
+            --accent-blue: #1e90ff;
+            --accent-yellow: #f1c40f;
+            --accent-purple: #bb86fc;
+        }
+        body {
+            font-family: sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 0;
+            text-align: center;
+        }
+        
+        /* --- NAVIGATION MENU --- */
+        nav {
+            background-color: var(--card-bg);
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+        .nav-brand {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: var(--accent-teal);
+        }
+        .nav-links a {
+            color: var(--text-main);
+            text-decoration: none;
+            margin-left: 20px;
+            font-size: 0.9rem;
+            transition: color 0.3s;
+        }
+        .nav-links a:hover {
+            color: var(--accent-teal);
+        }
+        .nav-links a.logout-btn {
+            color: var(--accent-red);
+            border: 1px solid var(--accent-red);
+            padding: 5px 15px;
+            border-radius: 5px;
+        }
+        .nav-links a.logout-btn:hover {
+            background-color: var(--accent-red);
+            color: #121212;
+        }
+        
+        /* --- MAIN DASHBOARD --- */
+        .content {
+            padding: 30px 20px;
+        }
+
+        h2.section-title {
+            color: #888;
+            text-align: left;
+            max-width: 1000px;
+            margin: 40px auto 10px auto;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+            border-top: 4px solid #333;
+            text-align: left;
+        }
+        
+        /* Card Top Borders */
+        .card.activity { border-top-color: var(--accent-purple); text-align: center; }
+        .card.steps { border-top-color: var(--accent-teal); }
+        .card.distance { border-top-color: var(--accent-yellow); }
+        .card.calories { border-top-color: var(--accent-orange); }
+        .card.timer { border-top-color: var(--accent-blue); text-align: center; }
+        .card.gps { border-top-color: var(--accent-red); grid-column: 1 / -1; text-align: center;}
+        
+        .value { font-size: 2.8rem; font-weight: bold; display: block; margin: 10px 0;}
+        .value.small { font-size: 2rem; }
+        .label { color: #888; font-size: 0.9rem; margin-top: 0; text-transform: uppercase; letter-spacing: 1px;}
+        .unit { font-size: 1.2rem; color: #888; font-weight: normal;}
+        
+        .status-dot {
+            height: 10px; width: 10px;
+            background-color: #555;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+
+        /* --- TIMER BUTTONS --- */
+        .btn-group { margin-top: 15px; display: flex; gap: 10px; justify-content: center; }
+        .btn { padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; color: #121212; transition: opacity 0.2s; }
+        .btn:hover { opacity: 0.8; }
+        .btn-start { background-color: var(--accent-blue); }
+        .btn-stop { background-color: var(--accent-red); }
+        .btn-reset { background-color: #888; }
+
+        /* --- CHART STYLES --- */
+        .chart-container {
+            background-color: var(--card-bg);
+            border-radius: 15px;
+            padding: 20px;
+            max-width: 1000px;
+            margin: 30px auto 0 auto; 
+            box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Top Menu -->
+    <nav>
+        <div class="nav-brand">⛰️ SmartHike</div>
+        <div class="nav-links">
+            <a href="/">Dashboard</a>
+            <a href="#">Settings</a>
+            <a href="/logout" class="logout-btn">Logout</a>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="content">
+        <h1 style="color: var(--text-main); letter-spacing: 2px;">LIVE WATCH RADAR</h1>
+        
+        <h2 class="section-title">Current Session</h2>
+        <div class="dashboard-grid">
+            <!-- Activity Card -->
+            <div class="card activity">
+                <div class="label">Current Activity</div>
+                <div class="value small" id="activity_val" style="color: var(--accent-purple);">--</div>
+            </div>
+
+            <!-- Timer Card -->
+            <div class="card timer">
+                <div class="label">Web Stopwatch</div>
+                <div class="value small" id="timer_val" style="font-family: monospace;">00:00:00</div>
+                <div class="btn-group">
+                    <button class="btn btn-start" onclick="startTimer()">Start</button>
+                    <button class="btn btn-stop" onclick="stopTimer()">Stop</button>
+                    <button class="btn btn-reset" onclick="resetTimer()">Reset</button>
+                </div>
+            </div>
+
+            <!-- Steps Card -->
+            <div class="card steps">
+                <div class="label">Session Steps</div>
+                <div class="value"><span id="step_val">--</span></div>
+            </div>
+
+            <!-- Distance Card -->
+            <div class="card distance">
+                <div class="label">Session Distance</div>
+                <div class="value"><span id="dist_val">--</span><span class="unit"> m</span></div>
+            </div>
+
+            <!-- Calories Card -->
+            <div class="card calories">
+                <div class="label">Session Calories</div>
+                <div class="value"><span id="cal_val">--</span><span class="unit"> kcal</span></div>
+            </div>
+            
+            <!-- GPS Location Card -->
+            <div class="card gps">
+                <div class="label">Live GPS Coordinates</div>
+                <div class="value small" style="font-family: monospace; color: var(--accent-red);"><span id="gps_val">Waiting for satellite...</span></div>
+            </div>
+        </div>
+
+        <h2 class="section-title">All-Time Totals</h2>
+        <div class="dashboard-grid">
+            <div class="card steps" style="border-top-color: #555;">
+                <div class="label">Total Steps</div>
+                <div class="value small"><span id="total_step_val">--</span></div>
+            </div>
+            <div class="card distance" style="border-top-color: #555;">
+                <div class="label">Total Distance</div>
+                <div class="value small"><span id="total_dist_val">--</span><span class="unit"> m</span></div>
+            </div>
+            <div class="card calories" style="border-top-color: #555;">
+                <div class="label">Total Calories</div>
+                <div class="value small"><span id="total_cal_val">--</span><span class="unit"> kcal</span></div>
+            </div>
+        </div>
+
+        <!-- LIVE CHART CONTAINER -->
+        <div class="chart-container">
+            <div class="label" style="margin-bottom: 15px;">Live Effort History</div>
+            <canvas id="historyChart"></canvas>
+        </div>
+
+        <div style="margin-top: 50px; color: #888; background: #1e1e1e; padding: 15px; border-radius: 10px; display: inline-block;">
+            Status: <span class="status-dot" id="dot"></span><span id="status" style="color: #ffcc00; font-weight: bold;">Connecting...</span>
+            <span style="margin-left: 20px; font-size: 14px;">Last Update: <span id="time_val">--</span></span>
+        </div>
+    </div> 
+
+    <script>
+        const dot = document.getElementById('dot');
+        const status = document.getElementById('status');
+        
+        // --- TIMER LOGIC ---
+        let startTime;
+        let elapsedTime = 0;
+        let timerInterval;
+
+        function timeToString(time) {
+            let diffInHrs = time / 3600000;
+            let hh = Math.floor(diffInHrs);
+            let diffInMin = (diffInHrs - hh) * 60;
+            let mm = Math.floor(diffInMin);
+            let diffInSec = (diffInMin - mm) * 60;
+            let ss = Math.floor(diffInSec);
+
+            return `${hh.toString().padStart(2, "0")}:${mm.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}`;
+        }
+
+        function startTimer() {
+            if (!timerInterval) { 
+                startTime = Date.now() - elapsedTime;
+                timerInterval = setInterval(() => {
+                    elapsedTime = Date.now() - startTime;
+                    document.getElementById("timer_val").innerText = timeToString(elapsedTime);
+                }, 1000);
+            }
+        }
+
+        function stopTimer() {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+
+        function resetTimer() {
+            stopTimer();
+            elapsedTime = 0;
+            document.getElementById("timer_val").innerText = "00:00:00";
+        }
+
+        // --- CHART INITIALIZATION ---
+        const ctx = document.getElementById('historyChart').getContext('2d');
+        const maxDataPoints = 20; // How many updates of history to show
+        
+        const historyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [], 
+                datasets: [
+                    {
+                        label: 'Steps',
+                        borderColor: '#03dac6', 
+                        backgroundColor: 'rgba(3, 218, 198, 0.2)',
+                        data: [],
+                        tension: 0.4, 
+                        fill: true,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Calories (kcal)',
+                        borderColor: '#ffb74d', 
+                        backgroundColor: 'rgba(255, 183, 77, 0.2)',
+                        data: [],
+                        tension: 0.4,
+                        fill: true,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { ticks: { color: '#888' }, grid: { color: '#333' } },
+                    y: { 
+                        type: 'linear', 
+                        display: true, 
+                        position: 'left',
+                        ticks: { color: '#03dac6' }, 
+                        grid: { color: '#333' } 
+                    },
+                    y1: { 
+                        type: 'linear', 
+                        display: true, 
+                        position: 'right',
+                        ticks: { color: '#ffb74d' }, 
+                        grid: { drawOnChartArea: false } // Prevents overlapping grid lines
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#fff' } }
+                }
+            }
+        });
+
+        // --- FETCH DATA FUNCTION ---
+        async function updateData() {
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                
+                // Update Current Session Cards
+                document.getElementById('activity_val').innerText = data.activity !== "--" ? data.activity : "Idle";
+                document.getElementById('step_val').innerText = data.steps;
+                document.getElementById('dist_val').innerText = data.watch_distance;
+                document.getElementById('cal_val').innerText = data.calories;
+                
+                // Update GPS
+                if (data.lat !== "--" && data.lng !== "--") {
+                    document.getElementById('gps_val').innerText = `Lat: ${data.lat.toFixed(5)}, Lng: ${data.lng.toFixed(5)}`;
+                }
+
+                // Update Total Cards
+                document.getElementById('total_step_val').innerText = data.total_steps;
+                document.getElementById('total_dist_val').innerText = data.total_distance;
+                document.getElementById('total_cal_val').innerText = data.total_calories;
+
+                document.getElementById('time_val').innerText = data.time;
+                
+                // Update Chart (Only if active hike data is present)
+                if (data.steps !== "--" && data.calories !== "--") {
+                    if (historyChart.data.labels.length >= maxDataPoints) {
+                        historyChart.data.labels.shift();
+                        historyChart.data.datasets[0].data.shift();
+                        historyChart.data.datasets[1].data.shift();
+                    }
+                    
+                    historyChart.data.labels.push(data.time);
+                    historyChart.data.datasets[0].data.push(parseFloat(data.steps));
+                    historyChart.data.datasets[1].data.push(parseFloat(data.calories));
+                    historyChart.update();
+                }
+
+                // Visual Status Update
+                dot.style.backgroundColor = "#03dac6"; // Green
+                status.innerText = "Watch Connected";
+                status.style.color = "#03dac6";
+            } catch (e) {
+                // If the Pi/Backend disconnects
+                dot.style.backgroundColor = "#cf6679"; // Red
+                status.innerText = "Backend Disconnected";
+                status.style.color = "#cf6679";
+            }
+        }
+        
+        // Fetch new data every 1 second
+        setInterval(updateData, 1000);
+        updateData();
+    </script>
+</body>
+</html>
