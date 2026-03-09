@@ -1,42 +1,45 @@
 <h1 align="center">⌚ SmartHike Watch OS Documentation</h1>
 
-🌟 Overview & Features
+<h2>🌟 Overview & Features</h2>
 
 The SmartHike Watch OS is a custom-built, gesture-driven smartwatch interface designed for the LilyGo T-Watch 2020 V2. It acts as a standalone fitness tracker and an IoT node that pushes live telemetry to a backend server via MQTT.
 
-Key Features:
+<h3>Key Features:</h3>
 
-Intuitive Gesture UI: Swipe left/right to switch apps, swipe up/down to scroll through menus, and double-tap the screen to instantly lock/sleep.
+<ol>
+<li>Intuitive Gesture UI: Swipe left/right to switch apps, swipe up/down to scroll through menus, and double-tap the screen to instantly lock/sleep.</li>
 
-Dynamic Activity Tracking: Choose between 5 preset activities (Cycling, Walking, Running, Snowboarding, Hiking) to apply the correct MET (Metabolic Equivalent of Task) values for calorie calculation.
+<li>Dynamic Activity Tracking: Choose between 5 preset activities (Cycling, Walking, Running, Snowboarding, Hiking) to apply the correct MET (Metabolic Equivalent of Task) values for calorie calculation.</li>
 
-Live Metrics Dashboard: Displays real-time step count (via BMA423 accelerometer), distance traveled, and calories burned.
+<li>Live Metrics Dashboard: Displays real-time step count (via BMA423 accelerometer), distance traveled, and calories burned.</li>
 
-GPS Telemetry: Live readout of Altitude and Speed via the internal GPS module.
+<li>GPS Telemetry: Live readout of Altitude and Speed via the internal GPS module.</li>
 
-Haptic Feedback: The internal vibration motor provides tactile confirmation for button presses, input errors, and a massive celebratory buzz when daily step goals are met.
+<li>Haptic Feedback: The internal vibration motor provides tactile confirmation for button presses, input errors, and a massive celebratory buzz when daily step goals are met.</li>
 
-Secure Lock Screen: Features an auto-timeout sleep mode, a wake-up clock face, and an optional 4-digit PIN keypad to secure the watch.
+<li>Secure Lock Screen: Features an auto-timeout sleep mode, a wake-up clock face, and an optional 4-digit PIN keypad to secure the watch.</li>
 
-On-Device Customization: Users can adjust their body weight, screen brightness, screen timeout duration, step goals, and hardware clock time directly from the watch.
+<li>On-Device Customization: Users can adjust their body weight, screen brightness, screen timeout duration, step goals, and hardware clock time directly from the watch.</li>
+</ol>
+<h2>📱 User Workflow</h2>
 
-📱 User Workflow
+<ol>
+<li>Wake & Unlock: Tap the screen to wake the watch. The clock face appears. Tap or swipe to unlock. If the Passcode is enabled, the user must input the correct 4-digit PIN.</li>
 
-Wake & Unlock: Tap the screen to wake the watch. The clock face appears. Tap or swipe to unlock. If the Passcode is enabled, the user must input the correct 4-digit PIN.
+<li>Navigation: The OS is split into 3 main horizontal pages. Swiping Left or Right transitions smoothly between them.</li>
 
-Navigation: The OS is split into 3 main horizontal pages. Swiping Left or Right transitions smoothly between them.
-
-Starting a Workout:
+<li>Starting a Workout:
 
 On Page 0, tap an activity from the menu (e.g., "Hiking").
 
 The live dashboard appears. Tap START HIKE.
 
-The watch begins tracking steps, calculating distance via GPS, and estimating calories. A background loop starts publishing this data to the Raspberry Pi over Wi-Fi.
+The watch begins tracking steps, calculating distance via GPS, and estimating calories. A background loop starts publishing this data to the Raspberry Pi over Wi-Fi.</li>
 
-Sleep: The user can double-tap the screen at any time to put the watch to sleep and save battery. Background tracking continues while asleep.
+<li>Sleep: The user can double-tap the screen at any time to put the watch to sleep and save battery. Background tracking continues while asleep.</li>
+</ol>
 
-🗺️ Page Structure & Hierarchy
+<h2>🗺️ Page Structure & Hierarchy</h2>
 
 The UI is built on a state-machine architecture consisting of 3 main pages and a scrolling sub-menu system.
 
@@ -76,7 +79,7 @@ Displays static Username.
 
 Interactive Weight (kg) adjustment for accurate calorie tracking.
 
-🧮 Calorie Calculation Formula
+<h2>🧮 Calorie Calculation Formula</h2>
 
 Calories are calculated dynamically based on the duration of the activity, the user's weight, and the intensity of the specific sport chosen.
 
@@ -102,7 +105,7 @@ Snowboarding: 7.0
 
 Hiking: 6.0
 
-🧩 Code Structure
+<h2>🧩 Code Structure</h2>
 
 To keep the main loop fast and responsive, the code is heavily modularized:
 
