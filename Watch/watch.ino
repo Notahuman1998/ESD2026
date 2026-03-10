@@ -1,6 +1,8 @@
+#include <Arduino.h> // REQUIRED FOR PLATFORMIO!
+
 #define LILYGO_WATCH_2020_V2                 
-#define LILYGO_WATCH_HAS_MOTOR      // Tells the library to enable the vibration motor!
-#define MOTOR_PIN 4                 // Fixes the missing pin bug in the LilyGo V2 library!
+#define LILYGO_WATCH_HAS_MOTOR      
+#define MOTOR_PIN 4                 
 #include <LilyGoWatch.h>
 #include <WiFi.h>                           
 #include <PubSubClient.h>                   
@@ -15,22 +17,23 @@ char buf[128];
 bool rtcIrq = false;
 int16_t start_status = 0; // 0 = STOPPED, 1 = RUNNING
  
-// WIFI
-int recon_attempt = 0;
-bool isDisconnect = true;
- 
-// MQTT
+// --- WIFI & MQTT CONFIGURATION ---
 const char* ssid = "Something_happen";     
 const char* password = "03081998";    
 const char* mqtt_server = "172.20.10.4";
 const int mqtt_port = 1883; 
-IPAddress local_IP(172, 20, 10, 12); 
-IPAddress subnet(255, 255, 255, 240);
+
+// Static IP Configuration
+IPAddress local_IP(172, 20, 10, 12);
 IPAddress gateway(172, 20, 10, 4);
- 
+IPAddress subnet(255, 255, 255, 240);
+IPAddress dns(172, 20, 10, 4);
+
 WiFiClient espClient;
 PubSubClient client(espClient);
-char topic[] ="test/topic"; 
+
+unsigned long lastWiFiCheck = 0;
+unsigned long lastMQTTCheck = 0;
  
 // GPS pointers
 TinyGPSPlus *gps = nullptr;
@@ -41,8 +44,8 @@ HardwareSerial *GNSS = NULL;
 #define COLOR_ACCENT TFT_CYAN       
 #define COLOR_TEXT   TFT_WHITE
 #define COLOR_DIM    TFT_DARKGREY
-#define COLOR_BTN_ON 0xE8E4         // Vibrant Red
-#define COLOR_BTN_OFF 0x07E0        // Vibrant Green
+#define COLOR_BTN_ON 0xE8E4         
+#define COLOR_BTN_OFF 0x07E0        
 
 // --- NEW DISTINCT COLORS FOR STATS ---
 #define COLOR_STEPS  TFT_SKYBLUE    
@@ -50,20 +53,24 @@ HardwareSerial *GNSS = NULL;
 #define COLOR_CALS   TFT_ORANGE     
 
 // --- SWIPE & PAGE VARIABLES ---
-int current_page = 0; // 0=Main/Menu, 1=Features, 2=Profile
+int current_page = 0; 
 int last_page = -1;
-int current_sub_page = 0; // 0=None, 1=Totals, 2=Battery, 3=Goal, 4=Alt/Speed, 5=SetTime, 6=ScreenTimeout, 7=Passcode
+int current_sub_page = 0; 
 int last_sub_page = -1;
 
 int16_t start_x = 0, start_y = 0;
 bool is_touching = false;
 
 // --- SCROLLING MENU VARIABLES ---
-int menu_scroll_y = 0; // Current scroll offset
+int menu_scroll_y = 0; 
 const int MENU_ITEM_HEIGHT = 45;
 const int MENU_ITEM_SPACING = 10;
-const int NUM_MENU_ITEMS = 8;
-const char* menu_items[NUM_MENU_ITEMS] = {"All-Time Totals", "Battery Status", "Set Step Goal", "Altitude & Speed", "Set Clock Time", "Screen Timeout", "Passcode Lock", "Screen Brightness"};
+const int NUM_MENU_ITEMS = 9;
+const char* menu_items[NUM_MENU_ITEMS] = {
+  "All-Time Totals", "Battery Status", "Set Step Goal", 
+  "Altitude & Speed", "Set Clock Time", "Screen Timeout", 
+  "Passcode Lock", "Screen Brightness", "Activity History"
+};
 
 // --- ACTIVITY MENU VARIABLES ---
 const char* act_names[5] = {"Cycling", "Walking", "Running", "Snowboard", "Hiking"};
@@ -88,6 +95,16 @@ double prev_lat = 0.0;
 double prev_lng = 0.0;
 bool has_start_fix = false;
 
+// --- ACTIVITY HISTORY ---
+struct ActivityRecord {
+  String act_name;
+  uint32_t steps;
+  double distance;
+  double calories;
+};
+ActivityRecord activity_history[5];
+int history_count = 0;
+
 // User Profile & Goals
 float user_weight = 70.0; 
 uint32_t step_goal = 10000;
@@ -96,24 +113,52 @@ bool goal_reached = false;
 // Setup Time Variables
 int edit_hour = 12;
 int edit_minute = 0;
-bool editing_hour = true; // Toggle between editing hour or minute
+bool editing_hour = true; 
 
 // --- PASSCODE & SCREEN STATE VARIABLES ---
 bool is_screen_on = true;
 unsigned long last_touch_time = 0;
-unsigned long screen_timeout_ms = 15000; // Default: 15 seconds
-unsigned long last_tap_time = 0; // For double tap detection
+unsigned long screen_timeout_ms = 15000; 
+unsigned long last_tap_time = 0; 
 
 bool is_locked = true;
-int lock_state = 0; // 0 = Showing Time, 1 = Showing Keypad
-bool passcode_enabled = false; // Turned OFF by default!
+int lock_state = 0; 
+bool passcode_enabled = false; 
 String current_passcode_input = "";
-String correct_passcode = "1234"; // Default passcode
-int screen_brightness = 255; // 0-255 scale (Default Max Brightness)
+String correct_passcode = "1234"; 
+int screen_brightness = 255; 
+
+// =========================================================================
+// ==================== WIFI & MQTT LOGIC ==================================
+// =========================================================================
+
+void connectWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.config(local_IP, gateway, subnet, dns);
+  WiFi.begin(ssid, password);
+  Serial.println("📡 Wi-Fi connection started in background...");
+}
+
+boolean reconnectMQTT() {
+  Serial.print("Connecting to MQTT... ");
+  if (client.connect("ESP32_WatchClient")) {
+    Serial.println("✅ MQTT Connected!");
+    return true;
+  } else {
+    Serial.print("❌ Failed, rc=");
+    Serial.println(client.state()); 
+    return false;
+  }
+}
 
 // =========================================================================
 // ==================== UI RENDERING FUNCTIONS =============================
 // =========================================================================
+
+void drawWiFiStatus(int x, int y) {
+  uint16_t color = (WiFi.status() == WL_CONNECTED) ? TFT_GREEN : TFT_RED;
+  tft->fillCircle(x, y, 4, color);
+}
 
 void drawToggleButton(bool isRunning) {
   if (isRunning) {
@@ -131,7 +176,6 @@ void drawToggleButton(bool isRunning) {
 
 void drawPageIndicators() {
   for(int i=0; i<3; i++) {
-    // 3 dots centered at the bottom
     tft->fillCircle(100 + (i*20), 225, 4, (i==current_page) ? COLOR_TEXT : COLOR_DIM);
   }
 }
@@ -154,7 +198,6 @@ void drawStats(uint32_t steps, double dist, double cals) {
 // ---- LOCK SCREEN ----
 void drawLockScreen(bool isStatic) {
   if (lock_state == 0) {
-    // STATE 0: Show Clock Face
     if (isStatic) {
       tft->fillScreen(COLOR_BG);
       tft->setTextColor(COLOR_DIM);
@@ -162,60 +205,50 @@ void drawLockScreen(bool isStatic) {
       if (passcode_enabled) tft->drawString("Tap to Unlock", 120, 180, 2);
       else tft->drawString("Swipe or Tap to open", 120, 180, 2);
       
-      // Draw a subtle lock icon indicator if passcode is on
       if (passcode_enabled) {
         tft->fillRoundRect(112, 30, 16, 14, 2, COLOR_TEXT);
         tft->drawRoundRect(115, 22, 10, 10, 4, COLOR_TEXT);
       }
     }
     
-    // Always refresh the time!
     RTC_Date now = watch->rtc->getDateTime();
     tft->setTextColor(COLOR_TEXT, COLOR_BG); 
     snprintf(buf, sizeof(buf), "%02d:%02d", now.hour, now.minute);
-    tft->drawString(buf, 120, 105, 7); // Big 7-segment digital font
+    tft->drawString(buf, 120, 105, 7); 
+    
+    drawWiFiStatus(220, 20);
     
   } else {
-    // STATE 1: Show Passcode Keypad
     if (isStatic) {
       tft->fillScreen(COLOR_BG);
       tft->setTextColor(COLOR_ACCENT);
       tft->setTextDatum(MC_DATUM);
       tft->drawString("ENTER PASSCODE", 120, 30, 2);
 
-      // Draw keypad
-      int key_w = 60;
-      int key_h = 40;
-      int start_x = 25;
-      int start_y = 70;
-      
+      int key_w = 60, key_h = 40, start_x = 25, start_y = 70;
       for(int i=0; i<3; i++) {
           for(int j=0; j<3; j++) {
               int num = i*3 + j + 1;
-              int x = start_x + j*(key_w + 5);
-              int y = start_y + i*(key_h + 5);
+              int x = start_x + j*(key_w + 5), y = start_y + i*(key_h + 5);
               tft->fillRoundRect(x, y, key_w, key_h, 5, COLOR_DIM);
               tft->setTextColor(COLOR_TEXT);
               snprintf(buf, sizeof(buf), "%d", num);
               tft->drawString(buf, x + key_w/2, y + key_h/2, 4);
           }
       }
-      // Draw 0
       tft->fillRoundRect(start_x + (key_w + 5), start_y + 3*(key_h + 5), key_w, key_h, 5, COLOR_DIM);
       tft->drawString("0", start_x + (key_w + 5) + key_w/2, start_y + 3*(key_h + 5) + key_h/2, 4);
       
-      // Draw Cancel/Clear
       tft->fillRoundRect(start_x + 2*(key_w + 5), start_y + 3*(key_h + 5), key_w, key_h, 5, COLOR_BTN_ON);
       tft->drawString("C", start_x + 2*(key_w + 5) + key_w/2, start_y + 3*(key_h + 5) + key_h/2, 2);
     }
 
-    // Draw entered numbers instead of dots
-    tft->fillRect(60, 45, 120, 20, COLOR_BG); // Clear previous numbers
+    tft->fillRect(60, 45, 120, 20, COLOR_BG); 
     tft->setTextColor(COLOR_TEXT);
     tft->setTextDatum(MC_DATUM);
     for(int i=0; i<current_passcode_input.length(); i++) {
        String digit = String(current_passcode_input.charAt(i));
-       tft->drawString(digit, 90 + i*20, 55, 4);
+       tft->drawString(digit, 90 + i*20, 55, 4); 
     }
   }
 }
@@ -226,26 +259,26 @@ void drawPageMain(bool isStatic) {
     if (isStatic) {
       tft->setTextColor(COLOR_ACCENT);
       tft->drawString("SELECT ACTIVITY", 120, 20, 2);
-      
       for (int i=0; i<5; i++) {
         int y_pos = 45 + i*34;
         tft->fillRoundRect(25, y_pos, 190, 30, 8, COLOR_DIM);
         tft->fillCircle(45, y_pos + 15, 6, act_colors[i]); 
-        
         tft->setTextColor(COLOR_TEXT);
         tft->setTextDatum(ML_DATUM); 
         tft->drawString(act_names[i], 65, y_pos + 15, 2);
       }
       tft->setTextDatum(MC_DATUM); 
     }
+    drawWiFiStatus(220, 20);
+    
   } else {
     if (isStatic) {
       tft->fillRoundRect(5, 5, 40, 28, 5, COLOR_DIM);
       tft->setTextColor(COLOR_TEXT);
       tft->drawString("<", 25, 19, 4);
       
-      tft->fillCircle(220, 19, 6, act_colors[current_activity_idx]);
-
+      tft->fillCircle(200, 19, 6, act_colors[current_activity_idx]); 
+      
       tft->setTextColor(COLOR_DIM);
       tft->drawString("STEPS", 60, 45, 2);
       tft->drawString("DIST", 180, 45, 2);
@@ -270,6 +303,8 @@ void drawPageMain(bool isStatic) {
     tft->setTextColor(COLOR_CALS, COLOR_BG);
     snprintf(buf, sizeof(buf), "%.1f", current_hike_calories);
     tft->drawString(buf, 120, 115, 4); 
+    
+    drawWiFiStatus(220, 20);
   }
 }
 
@@ -277,7 +312,6 @@ void drawPageMain(bool isStatic) {
 void drawPageFeaturesMenu(bool isStatic) {
   if (isStatic) {
     tft->fillScreen(COLOR_BG); 
-    
     for (int i = 0; i < NUM_MENU_ITEMS; i++) {
       int item_y = 40 + (i * (MENU_ITEM_HEIGHT + MENU_ITEM_SPACING)) + menu_scroll_y;
       if (item_y > -MENU_ITEM_HEIGHT && item_y < 240) {
@@ -286,11 +320,9 @@ void drawPageFeaturesMenu(bool isStatic) {
         tft->drawString(menu_items[i], 120, item_y + (MENU_ITEM_HEIGHT/2), 2);
       }
     }
-    
     tft->fillRect(0, 0, 240, 35, COLOR_BG);
     tft->setTextColor(COLOR_ACCENT);
     tft->drawString("FEATURES", 120, 15, 2);
-
     tft->fillRect(0, 215, 240, 25, COLOR_BG);
     drawPageIndicators(); 
   }
@@ -313,27 +345,28 @@ void drawSubPageBattery(bool isStatic) {
     tft->setTextColor(COLOR_TEXT);
     tft->drawString("<", 25, 19, 4);
     tft->setTextColor(COLOR_ACCENT);
-    tft->drawString("BATTERY", 120, 30, 2);
-    tft->drawRect(80, 70, 70, 30, COLOR_TEXT); 
-    tft->fillRect(150, 78, 6, 14, COLOR_TEXT);  
+    tft->drawString("SYSTEM STATUS", 120, 30, 2);
+    tft->drawRect(80, 60, 70, 30, COLOR_TEXT); 
+    tft->fillRect(150, 68, 6, 14, COLOR_TEXT);  
   }
-  
   int battPercent = watch->power->getBattPercentage();
   float battVoltage = watch->power->getBattVoltage() / 1000.0;
-  float tempC = watch->power->getTemp();  
 
   int fillW = (battPercent * 66) / 100;
-  tft->fillRect(82, 72, fillW, 26, (battPercent > 20) ? TFT_GREEN : TFT_RED);
-  tft->fillRect(82 + fillW, 72, 66 - fillW, 26, COLOR_BG); 
+  tft->fillRect(82, 62, fillW, 26, (battPercent > 20) ? TFT_GREEN : TFT_RED);
+  tft->fillRect(82 + fillW, 62, 66 - fillW, 26, COLOR_BG); 
 
   tft->setTextColor(COLOR_TEXT, COLOR_BG);
   snprintf(buf, sizeof(buf), "%d %%   ", battPercent);
-  tft->drawString(buf, 120, 120, 4);
+  tft->drawString(buf, 120, 110, 4);
+  
   tft->setTextColor(COLOR_DIM, COLOR_BG);
   snprintf(buf, sizeof(buf), "Voltage: %.2f V   ", battVoltage);
-  tft->drawString(buf, 120, 160, 2);
-  snprintf(buf, sizeof(buf), "Core Temp: %.1f C   ", tempC);
-  tft->drawString(buf, 120, 190, 2);
+  tft->drawString(buf, 120, 150, 2);
+  
+  String wifiStr = (WiFi.status() == WL_CONNECTED) ? "Wi-Fi: Connected   " : "Wi-Fi: Disconnected";
+  tft->setTextColor((WiFi.status() == WL_CONNECTED) ? TFT_GREEN : TFT_RED, COLOR_BG);
+  tft->drawString(wifiStr, 120, 180, 2);
 }
 
 void drawSubPageGoal(bool isStatic) {
@@ -432,26 +465,18 @@ void drawSubPagePasscode(bool isStatic) {
     tft->fillRoundRect(5, 5, 40, 28, 5, COLOR_DIM);
     tft->setTextColor(COLOR_TEXT);
     tft->drawString("<", 25, 19, 4);
-
     tft->setTextColor(COLOR_ACCENT);
     tft->drawString("PASSCODE SETUP", 120, 20, 2);
     
-    // Toggle Button
     tft->fillRoundRect(20, 45, 200, 35, 5, passcode_enabled ? TFT_GREEN : COLOR_DIM);
     tft->setTextColor(passcode_enabled ? TFT_BLACK : COLOR_TEXT);
     tft->drawString(passcode_enabled ? "Status: ON" : "Status: OFF", 120, 62, 2);
 
-    // Setup Keypad (Set a new code)
-    int key_w = 45;
-    int key_h = 30;
-    int start_sx = 45;
-    int start_sy = 95;
-    
+    int key_w = 45, key_h = 30, start_sx = 45, start_sy = 95;
     for(int i=0; i<3; i++) {
         for(int j=0; j<3; j++) {
             int num = i*3 + j + 1;
-            int x = start_sx + j*(key_w + 5);
-            int y = start_sy + i*(key_h + 5);
+            int x = start_sx + j*(key_w + 5), y = start_sy + i*(key_h + 5);
             tft->fillRoundRect(x, y, key_w, key_h, 5, COLOR_DIM);
             tft->setTextColor(COLOR_TEXT);
             snprintf(buf, sizeof(buf), "%d", num);
@@ -465,13 +490,12 @@ void drawSubPagePasscode(bool isStatic) {
     tft->drawString("C", start_sx + 2*(key_w + 5) + key_w/2, start_sy + 3*(key_h + 5) + key_h/2, 2);
   }
   
-  // Draw new PIN numbers instead of dots
-  tft->fillRect(60, 220, 120, 20, COLOR_BG); // Clear area
+  tft->fillRect(60, 220, 120, 20, COLOR_BG); 
   tft->setTextColor(COLOR_TEXT);
   tft->setTextDatum(MC_DATUM);
   for(int i=0; i<current_passcode_input.length(); i++) {
      String digit = String(current_passcode_input.charAt(i));
-     tft->drawString(digit, 90 + i*20, 230, 4); // Using font 4 so it's easier to read
+     tft->drawString(digit, 90 + i*20, 230, 4); 
   }
 }
 
@@ -480,25 +504,55 @@ void drawSubPageBrightness(bool isStatic) {
     tft->fillRoundRect(5, 5, 40, 28, 5, COLOR_DIM);
     tft->setTextColor(COLOR_TEXT);
     tft->drawString("<", 25, 19, 4);
-
     tft->setTextColor(COLOR_ACCENT);
     tft->drawString("SCREEN BRIGHTNESS", 120, 30, 2);
-    
     tft->fillRoundRect(30, 150, 50, 40, 5, COLOR_BTN_ON);
     tft->fillRoundRect(160, 150, 50, 40, 5, COLOR_BTN_OFF);
     tft->setTextColor(COLOR_TEXT);
     tft->drawString("-", 55, 170, 4);
-    
     tft->setTextColor(TFT_BLACK);
     tft->drawString("+", 185, 170, 4);
   }
-  
   tft->fillRect(40, 80, 160, 50, COLOR_BG); 
   tft->setTextColor(COLOR_TEXT, COLOR_BG);
-  // Convert the 0-255 scale into a readable 0-100%
   int bright_percent = (screen_brightness * 100) / 255;
   snprintf(buf, sizeof(buf), "%d %%", bright_percent);
   tft->drawString(buf, 120, 105, 6); 
+}
+
+void drawSubPageHistory(bool isStatic) {
+  if (isStatic) {
+    tft->fillScreen(COLOR_BG);
+    tft->fillRoundRect(5, 5, 40, 28, 5, COLOR_DIM);
+    tft->setTextColor(COLOR_TEXT);
+    tft->setTextDatum(MC_DATUM);
+    tft->drawString("<", 25, 19, 4);
+
+    tft->setTextColor(COLOR_ACCENT);
+    tft->drawString("ACTIVITY HISTORY", 120, 20, 2);
+
+    if (history_count == 0) {
+      tft->setTextColor(COLOR_DIM);
+      tft->drawString("No history yet.", 120, 120, 2);
+    } else {
+      for (int i = 0; i < history_count; i++) {
+        int y = 50 + (i * 35);
+        tft->setTextDatum(ML_DATUM); 
+        
+        tft->setTextColor(COLOR_TEXT);
+        snprintf(buf, sizeof(buf), "%d. %s", i + 1, activity_history[i].act_name.c_str());
+        tft->drawString(buf, 15, y, 2);
+
+        tft->setTextColor(COLOR_DIM);
+        snprintf(buf, sizeof(buf), "%u steps | %.1fkm | %.1fkcal", 
+                 activity_history[i].steps, 
+                 (activity_history[i].distance / 1000.0), 
+                 activity_history[i].calories);
+        tft->drawString(buf, 25, y + 16, 1);
+      }
+      tft->setTextDatum(MC_DATUM); 
+    }
+  }
 }
 
 // ---- PAGE 2: PROFILE ----
@@ -506,20 +560,16 @@ void drawPageProfile(bool isStatic) {
   if (isStatic) {
     tft->setTextColor(COLOR_ACCENT);
     tft->drawString("USER PROFILE", 120, 30, 2);
-    
     tft->setTextColor(COLOR_DIM);
     tft->drawString("Name:", 120, 70, 2);
     tft->setTextColor(COLOR_TEXT);
     tft->drawString("SmartHiker", 120, 95, 4);
-    
     tft->setTextColor(COLOR_DIM);
     tft->drawString("Weight (kg):", 120, 135, 2);
-    
     tft->fillRoundRect(30, 155, 40, 35, 5, COLOR_BTN_ON);
     tft->fillRoundRect(170, 155, 40, 35, 5, COLOR_BTN_OFF);
     tft->setTextColor(COLOR_TEXT);
     tft->drawString("-", 50, 172, 4);
-    
     tft->setTextColor(TFT_BLACK);
     tft->drawString("+", 190, 172, 4);
   }
@@ -533,50 +583,26 @@ void drawPageProfile(bool isStatic) {
 // ==================== MAIN SETUP & LOOP ==================================
 // =========================================================================
 
-void setup_wifi() {
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);
- 
-  unsigned long AttemptTime = millis(); 
-  while ((WiFi.status() != WL_CONNECTED) && (millis() - AttemptTime < 3100)) {
-    delay(1000);
-    Serial.print(".");
-  }
-}
- 
-void stop_wifi() {
-  WiFi.disconnect();
-  WiFi.softAPdisconnect(true);
-}
- 
-void initReconnect() {
-  stop_wifi();
-  setup_wifi();
-  reconnect();
-}
- 
-void callback(char* topic, byte* payload, unsigned int length) {}
- 
-bool mqttSendMsg(String topic, String msg) {
-  if (client.publish(topic.c_str(), msg.c_str(), true)) return true;
-  return false;
-}
- 
 void setup() {
   Serial.begin(115200);
   watch = TTGOClass::getWatch();
   watch->begin();
+  
+  tft = watch->tft;
+
   watch->openBL();
-  watch->bl->adjust(screen_brightness); // Set initial brightness to max!
+  watch->bl->adjust(screen_brightness);
+  tft->fillScreen(TFT_BLACK);
+  tft->setTextColor(TFT_CYAN);
+  tft->setTextDatum(MC_DATUM);
+  tft->drawString("BOOTING UP...", 120, 120, 4);
+
   watch->power->setPowerOutPut(AXP202_LDO3, AXP202_ON);
   
   watch->motor_begin();
   watch->trunOnGPS();
   watch->gps_begin();
  
-  tft = watch->tft;
   sensor = watch->bma;
   GNSS = watch->hwSerial;
   gps = watch->gps;
@@ -599,27 +625,45 @@ void setup() {
   sensor->resetStepCounter();
   sensor->enableStepCountInterrupt();
  
-  setup_wifi();
+  connectWiFi(); 
   client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
 
   last_touch_time = millis(); 
 }
  
 void loop() {
+  unsigned long currentMillis = millis();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (currentMillis - lastWiFiCheck > 10000) { 
+      Serial.println("⚠️ WiFi lost! Attempting reconnect...");
+      WiFi.disconnect();
+      WiFi.begin(ssid, password);
+      lastWiFiCheck = currentMillis;
+    }
+  } else {
+    if (!client.connected()) {
+      if (currentMillis - lastMQTTCheck > 10000) { 
+        reconnectMQTT();
+        lastMQTTCheck = currentMillis;
+      }
+    } else {
+      client.loop(); 
+    }
+  }
+
+
   int16_t x, y;
   static int16_t last_x = 0, last_y = 0;
   bool touched = watch->getTouch(x, y);
-  unsigned long currentMillis = millis();
 
-  // --- SCREEN TIMEOUT & WAKE LOGIC ---
   if (touched) {
       if (!is_screen_on) {
           watch->openBL();
-          watch->bl->adjust(screen_brightness); // Restore chosen brightness on wake up!
+          watch->bl->adjust(screen_brightness); 
           is_screen_on = true;
-          is_locked = true; // Lock immediately on wake up!
-          lock_state = 0;   // Start at the Clock Face lock screen
+          is_locked = true; 
+          lock_state = 0;   
           last_page = -1; 
           last_sub_page = -1;
           is_touching = true; 
@@ -631,7 +675,7 @@ void loop() {
   } else if (is_screen_on && currentMillis - last_touch_time > screen_timeout_ms) {
       watch->closeBL();
       is_screen_on = false;
-      is_locked = true; // Lock when screen sleeps
+      is_locked = true; 
       lock_state = 0; 
   }
 
@@ -639,8 +683,6 @@ void loop() {
       goto data_tracking_section;
   }
 
-
-  // --- TOUCH & SWIPE LOGIC ---
   if (touched) {
     if (!is_touching) {
       is_touching = true;
@@ -655,12 +697,11 @@ void loop() {
       int16_t delta_x = last_x - start_x;
       int16_t delta_y = last_y - start_y;
       
-      // DOUBLE TAP LOGIC to sleep screen
       if (abs(delta_x) < 20 && abs(delta_y) < 20) {
           if (currentMillis - last_tap_time < 300) {
               watch->closeBL();
               is_screen_on = false;
-              is_locked = true; // Lock when sleeping manually
+              is_locked = true; 
               lock_state = 0;
               last_tap_time = 0; 
               goto data_tracking_section;
@@ -668,26 +709,22 @@ void loop() {
           last_tap_time = currentMillis;
       }
 
-
       if (is_locked) {
-          // --- LOCK SCREEN TOUCH LOGIC ---
-          if (lock_state == 0) { // CLOCK FACE STATE
+          if (lock_state == 0) { 
               if (abs(delta_x) > 50 || (abs(delta_x) < 20 && abs(delta_y) < 20)) { 
-                  // If they swipe or tap the clock face
                   if (passcode_enabled) {
-                      lock_state = 1; // Require PIN
+                      lock_state = 1; 
                       current_passcode_input = "";
                       last_page = -1; 
                   } else {
-                      is_locked = false; // Bypass directly if no passcode
+                      is_locked = false; 
                       last_page = -1; 
                   }
               }
           } 
-          else if (lock_state == 1) { // KEYPAD STATE
+          else if (lock_state == 1) { 
               if (abs(delta_x) < 20 && abs(delta_y) < 20) {
-                int key_w = 60, key_h = 40;
-                int start_sx = 25, start_sy = 70;
+                int key_w = 60, key_h = 40, start_sx = 25, start_sy = 70;
                 
                 for(int i=0; i<3; i++) {
                     for(int j=0; j<3; j++) {
@@ -721,9 +758,6 @@ void loop() {
               }
           }
       } else {
-          // --- REGULAR INTERFACE TOUCH LOGIC ---
-
-          // VERTICAL SCROLLING
           if (current_page == 1 && current_sub_page == 0 && abs(delta_y) > 30) {
             menu_scroll_y += delta_y;
             if (menu_scroll_y > 0) menu_scroll_y = 0;
@@ -732,16 +766,13 @@ void loop() {
             last_page = -1; 
           }
           
-          // HORIZONTAL PAGE SWIPING
           else if (current_sub_page == 0 && abs(delta_x) > 50) {
             if (delta_x < -50) current_page = (current_page + 1) % 3; 
             else if (delta_x > 50) current_page = (current_page + 2) % 3; 
           }
 
-          // BUTTON TAPS
           else if (abs(delta_x) < 20 && abs(delta_y) < 20) {
             
-            // PAGE 0 TOUCH LOGIC
             if (current_page == 0) {
               if (!is_activity_selected) {
                 for (int i=0; i<5; i++) {
@@ -775,13 +806,23 @@ void loop() {
                     total_steps += current_hike_steps;
                     total_distance += current_hike_distance;
                     total_calories += current_hike_calories;
+
+                    for (int i = 4; i > 0; i--) {
+                        activity_history[i] = activity_history[i - 1];
+                    }
+                    
+                    activity_history[0].act_name = act_names[current_activity_idx];
+                    activity_history[0].steps = current_hike_steps;
+                    activity_history[0].distance = current_hike_distance;
+                    activity_history[0].calories = current_hike_calories;
+                    
+                    if (history_count < 5) history_count++;
                   }
                   last_page = -1; 
                 }
               }
             }
             
-            // PAGE 1: FEATURES SCROLL MENU LOGIC
             else if (current_page == 1) {
               if (current_sub_page == 0) {
                  if (start_y > 35 && start_y < 215) {
@@ -795,20 +836,18 @@ void loop() {
                               RTC_Date now = watch->rtc->getDateTime();
                               edit_hour = now.hour; edit_minute = now.minute;
                            } else if (current_sub_page == 7) {
-                              current_passcode_input = ""; // Clear input for passcode setup
+                              current_passcode_input = ""; 
                            }
                            break;
                         }
                      }
                  }
               } else {
-                // Back Button for all sub-pages
                 if (start_y < 40 && start_x < 50) {
                    current_sub_page = 0; 
                    last_sub_page = -1;
                    current_passcode_input = ""; 
                 }
-                // Goal Sub-page
                 else if (current_sub_page == 3 && start_y > 140 && start_y < 200) {
                   if (start_x < 90) {
                     if (step_goal > 500) step_goal -= 500; 
@@ -821,7 +860,6 @@ void loop() {
                   }
                   last_sub_page = -1;
                 }
-                // Set Time Sub-page
                 else if (current_sub_page == 5) {
                    if (start_y > 65 && start_y < 95) {
                      editing_hour = (start_x < 110);
@@ -846,7 +884,6 @@ void loop() {
                      if (watch->motor) watch->motor->onec(200); 
                    }
                 }
-                // Screen Timeout Sub-page
                 else if (current_sub_page == 6 && start_y > 140 && start_y < 200) {
                   if (start_x < 90) {
                     if (screen_timeout_ms > 5000) screen_timeout_ms -= 5000; 
@@ -857,17 +894,15 @@ void loop() {
                   }
                   last_sub_page = -1;
                 }
-                // Passcode Setup Sub-page
                 else if (current_sub_page == 7) {
-                   if (start_y > 45 && start_y < 80) { // Toggle ON/OFF
+                   if (start_y > 45 && start_y < 80) { 
                        passcode_enabled = !passcode_enabled;
                        if (!passcode_enabled) current_passcode_input = "";
                        if (watch->motor) watch->motor->onec(50);
                        last_sub_page = -1;
                    }
-                   else if (start_y > 90) { // Keypad for new PIN
+                   else if (start_y > 90) { 
                         int key_w = 45, key_h = 30, start_sx = 45, start_sy = 95;
-                        
                         for(int i=0; i<3; i++) {
                             for(int j=0; j<3; j++) {
                                 int bx = start_sx + j*(key_w + 5), by = start_sy + i*(key_h + 5);
@@ -886,24 +921,23 @@ void loop() {
                         }
 
                         if (current_passcode_input.length() == 4) {
-                            correct_passcode = current_passcode_input; // Set new PIN
+                            correct_passcode = current_passcode_input; 
                             current_passcode_input = "";
-                            passcode_enabled = true; // Auto-enable
-                            if (watch->motor) watch->motor->onec(200); // Success Buzz
+                            passcode_enabled = true; 
+                            if (watch->motor) watch->motor->onec(200); 
                         }
                         last_sub_page = -1;
                    }
                 }
-                // Screen Brightness Sub-page
                 else if (current_sub_page == 8 && start_y > 140 && start_y < 200) {
                   if (start_x < 90) {
-                    if (screen_brightness > 25) screen_brightness -= 25; // Min brightness
-                    watch->bl->adjust(screen_brightness); // Apply live
+                    if (screen_brightness > 25) screen_brightness -= 25; 
+                    watch->bl->adjust(screen_brightness); 
                     if (watch->motor) watch->motor->onec(50); 
                   } else if (start_x > 150) {
                     if (screen_brightness < 255) screen_brightness += 25; 
-                    if (screen_brightness > 255) screen_brightness = 255; // Max brightness
-                    watch->bl->adjust(screen_brightness); // Apply live
+                    if (screen_brightness > 255) screen_brightness = 255; 
+                    watch->bl->adjust(screen_brightness); 
                     if (watch->motor) watch->motor->onec(50); 
                   }
                   last_sub_page = -1;
@@ -911,7 +945,6 @@ void loop() {
               }
             }
 
-            // PAGE 2: PROFILE LOGIC
             else if (current_page == 2 && start_y > 130 && start_y < 190) {
               if (start_x < 100) {
                 user_weight -= 1.0; 
@@ -930,7 +963,6 @@ void loop() {
   }
 
 data_tracking_section:
-  // --- DATA TRACKING ---
   while (GNSS->available()) { gps->encode(GNSS->read()); }
   
   if (start_status == 1) {
@@ -958,7 +990,6 @@ data_tracking_section:
     sensor->enableFeature(BMA423_STEP_CNTR, false);
   }
 
-  // --- GOAL CELEBRATION LOGIC ---
   uint32_t effective_total_steps = total_steps;
   if (start_status == 1) {
     effective_total_steps += current_hike_steps; 
@@ -966,7 +997,6 @@ data_tracking_section:
 
   if (effective_total_steps >= step_goal && !goal_reached && step_goal > 0) {
     goal_reached = true;
-    
     if (watch->motor) watch->motor->onec(1000); 
     
     if (is_screen_on && !is_locked) {
@@ -974,22 +1004,16 @@ data_tracking_section:
         tft->setTextColor(TFT_YELLOW);
         tft->setTextDatum(MC_DATUM);
         tft->drawString("CONGRATULATIONS!", 120, 100, 4);
-        
         tft->setTextColor(TFT_WHITE);
         tft->drawString("You reached the goal, bro!", 120, 140, 2);
-        
         delay(4000); 
-        
         last_page = -1;
         last_sub_page = -1;
     }
   }
 
-  // --- UI SCREEN MANAGEMENT ---
   if (is_screen_on) {
       if (is_locked) {
-          // If locked, just constantly call the draw function to keep the time updated 
-          // (isStatic is true if the state just changed)
           if (last_page != 99) { 
               drawLockScreen(true);
               last_page = 99;
@@ -1000,21 +1024,14 @@ data_tracking_section:
           bool isPageChanged = (current_page != last_page) || (current_sub_page != last_sub_page);
           
           if (isPageChanged) {
-            // Note: drawPageFeaturesMenu handles its own fillScreen now for scrolling
-            if (current_page != 1 || current_sub_page != 0) {
-               tft->fillScreen(COLOR_BG);
-            }
-            
-            if (current_sub_page == 0) {
-              drawPageIndicators();
-            }
+            if (current_page != 1 || current_sub_page != 0) tft->fillScreen(COLOR_BG);
+            if (current_sub_page == 0) drawPageIndicators();
             
             tft->setTextDatum(MC_DATUM);
             last_page = current_page;
             last_sub_page = current_sub_page;
           }
 
-          // Draw the current active page!
           switch(current_page) {
             case 0: 
               drawPageMain(isPageChanged); 
@@ -1029,6 +1046,7 @@ data_tracking_section:
               else if (current_sub_page == 6) drawSubPageScreenTimeout(isPageChanged);
               else if (current_sub_page == 7) drawSubPagePasscode(isPageChanged);
               else if (current_sub_page == 8) drawSubPageBrightness(isPageChanged);
+              else if (current_sub_page == 9) drawSubPageHistory(isPageChanged);
               break;
             case 2: 
               drawPageProfile(isPageChanged); 
@@ -1037,39 +1055,38 @@ data_tracking_section:
       }
   }
   
-  // --- MQTT LOGIC ---
   if (start_status == 1 && irq) {
     irq = 0;
     bool rlst;
     do { rlst = sensor->readInterrupt(); } while (!rlst);
 
     if (sensor->isStepCounter()) {
-      unsigned long currentMillis = millis();
-      RTC_Date now = watch->rtc->getDateTime();
-      snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", now.year, now.month, now.day, now.hour, now.minute, now.second);
-      
       if (client.connected()) {
-        mqttSendMsg(topic, "Date=" + String(buf) + ", Timestamp="+ String(currentMillis / 1000) + 
-                           ", Activity=" + String(act_names[current_activity_idx]) +
-                           ", StepCount= " + String(current_hike_steps) + 
-                           ", Distance= " + String(current_hike_distance, 1) + 
-                           ", Calories= " + String(current_hike_calories, 1) + 
-                           ", GPS= Lat:"+ String(gps->location.lat()) + " Long:" + String(gps->location.lng()));
-      } else {
-        setup_wifi();
-        client.setServer(mqtt_server, 1883);
-        reconnect();
+        
+        String actJSON = "{\"activity\": \"" + String(act_names[current_activity_idx]) + "\"}";
+        String stepsJSON = "{\"steps\": " + String(current_hike_steps) + "}";
+        String distJSON = "{\"distance\": " + String(current_hike_distance, 1) + "}";
+        String calsJSON = "{\"calories\": " + String(current_hike_calories, 1) + "}";
+        
+        String totalStepsJSON = "{\"total_steps\": " + String(effective_total_steps) + "}";
+        String totalDistJSON = "{\"total_distance\": " + String((total_distance + current_hike_distance), 1) + "}";
+        String totalCalsJSON = "{\"total_calories\": " + String((total_calories + current_hike_calories), 1) + "}";
+        
+        String gpsJSON = "{\"lat\": " + String(gps->location.lat(), 6) + ", \"lng\": " + String(gps->location.lng(), 6) + "}";
+
+        client.publish("sensor/watch/activity", actJSON.c_str());
+        client.publish("sensor/watch/steps", stepsJSON.c_str());
+        client.publish("sensor/watch/distance", distJSON.c_str());
+        client.publish("sensor/watch/calories", calsJSON.c_str());
+        
+        client.publish("sensor/watch/total_steps", totalStepsJSON.c_str());
+        client.publish("sensor/watch/total_distance", totalDistJSON.c_str());
+        client.publish("sensor/watch/total_calories", totalCalsJSON.c_str());
+        
+        client.publish("sensor/watch/gps", gpsJSON.c_str());
       }
     }
   }
   
   delay(50); 
-}
- 
-void reconnect() {
-  unsigned long startAttemptTime = millis(); 
-  while (!client.connected() && (millis() - startAttemptTime < 300)) {
-      client.connect("ESP32WatchClient");
-      delay(50);
-  }
 }
